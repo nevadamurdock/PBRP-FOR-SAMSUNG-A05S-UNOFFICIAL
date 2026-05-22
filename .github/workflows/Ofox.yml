@@ -3,13 +3,6 @@ name: Recovery Builder - OrangeFox Recovery Project
 on:
   workflow_dispatch:
     inputs:
-      MANIFEST_BRANCH:
-        description: 'OrangeFox Manifest Branch'
-        required: true
-        default: '12.1'
-        type: choice
-        options:
-        - '12.1'
       DEVICE_TREE:
         description: 'Custom Recovery Tree'
         required: true
@@ -30,10 +23,6 @@ on:
         description: 'Input Maintainer Name'
         required: true
         default: 'Agus Ganteng'
-      BUILD_TARGET:
-        description: 'Specify your Build Target'
-        required: true
-        default: 'recovery'
 
 jobs:
   build:
@@ -50,7 +39,7 @@ jobs:
       
     - name: Tampilkan Informasi Awal Build
       run: |
-        echo "=== MENJALANKAN PROSES BUILD ==="
+        echo "=== MENJALANKAN PROSES BUILD ORANGEFOX ==="
         echo "Target Perangkat : ${{ github.event.inputs.DEVICE_NAME }}"
         echo "Device Tree      : ${{ github.event.inputs.DEVICE_TREE }} [${{ github.event.inputs.DEVICE_TREE_BRANCH }}]"
         echo "Maintainer Utama : ${{ github.event.inputs.MAINTAINER_NAME }}"
@@ -60,8 +49,6 @@ jobs:
       run: |
         echo "=== UKURAN DISK SEBELUM PEMBERSIHAN ==="
         df -h
-        
-        # Singkirkan semua runtime, SDK besar, dan toolchain bawaan GitHub runner yang tidak terpakai
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
@@ -70,11 +57,8 @@ jobs:
         sudo rm -rf /usr/local/share/phantomjs*
         sudo rm -rf /usr/share/swift
         sudo rm -rf /var/lib/megam_actions
-        
-        # Bersihkan sisa docker dan managemen paket aplikasi Linux
         sudo apt-get clean
         docker rmi $(docker images -q) 2>/dev/null || true
-        
         echo "=== UKURAN DISK SESUDAH PEMBERSIHAN ==="
         df -h
       
@@ -82,7 +66,6 @@ jobs:
       run: |
         sudo swapoff -a
         sudo rm -f /mnt/swapfile
-        # Membuka swap memory di partisi /mnt yang memiliki sisa ruang paling lega di VM gratisan
         sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
         sudo chmod 600 /mnt/swapfile
         sudo mkswap /mnt/swapfile
@@ -110,59 +93,76 @@ jobs:
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
 
-    - name: Inisialisasi Kode Sumber OrangeFox (Menggunakan Mirror GitHub Bebas Autentikasi)
+    - name: Unduh dan Persiapkan Skrip Sinkronisasi OrangeFox
       run: |
-        mkdir android-recovery
-        cd android-recovery
+        mkdir -p fox_build
+        cd fox_build
+        
+        # Mengunduh arsip yang telah Anda siapkan
+        wget https://uploader.sh/Li_zF/7zI1U.gz
+        
+        # Ekstrak file .gz bawaan dari GitLab sync
+        gunzip 7zI1U.gz
+        
+        # Antisipasi apabila isi file mentahnya adalah sebuah tarball
+        if file 7zI1U | grep -q 'tar archive'; then
+          tar -xvf 7zI1U
+        else
+          # Jika berupa skrip teks langsung, ubah namanya agar seragam
+          mv 7zI1U orangefox_sync.sh 2>/dev/null || true
+        fi
+        
+        # Berikan izin eksekusi penuh pada skrip
+        chmod +x *.sh 2>/dev/null || chmod +x orangefox_sync.sh 2>/dev/null
+
+    - name: Jalankan Sinkronisasi Kode Sumber OrangeFox
+      run: |
+        cd fox_build
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
         
-        # Dialihkan ke basis cermin manifest minimal OrangeFox di GitHub untuk menghindari proteksi GitLab Auth
-        repo init --depth=1 -u https://github.com/kinguser981/OrangeFox-Manifest.git -b orangefox-${{ github.event.inputs.MANIFEST_BRANCH }}
-  
-    - name: Proses Sinkronisasi Sumber Ringan (Hemat Bandwidth)
-      run: |
-        cd android-recovery
-        repo sync -c -j4 --force-sync --no-tags --no-clone-bundle
-      
+        # Mengeksekusi skrip bawaan dari repositori OrangeFox Sync
+        if [ -f "orangefox_sync.sh" ]; then
+          ./orangefox_sync.sh
+        else
+          sh *.sh
+        fi
+
     - name: Mengkloning Device Tree Samsung A05s
       run: |
-        cd android-recovery
+        cd fox_build
+        # Memasukkan device tree ke dalam struktur folder hasil sinkronisasi skrip
         git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
         cd ${{ github.event.inputs.DEVICE_PATH }}
         echo "COMMIT_ID=$(git rev-parse HEAD | cut -c1-7)" >> $GITHUB_ENV
 
     - name: Verifikasi Struktur Nama Makefile Target
       run: |
-        cd android-recovery
+        cd fox_build
         if [ -f ${{ github.event.inputs.DEVICE_PATH }}/twrp_${{ github.event.inputs.DEVICE_NAME }}.mk ]; then
             echo "DEVICE_MAKEFILE=twrp_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
         elif [ -f ${{ github.event.inputs.DEVICE_PATH }}/omni_${{ github.event.inputs.DEVICE_NAME }}.mk ]; then
             echo "DEVICE_MAKEFILE=omni_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
         else
-            echo "Format Makefile perangkat tidak ditemukan di device tree!"
-            exit 1
+          echo "Format Makefile perangkat tidak ditemukan di device tree!"
+          exit 1
         fi
 
-    - name: Proses Eksekusi Kompilasi OrangeFox (Diet RAM & Ruang)
+    - name: Proses Eksekusi Kompilasi OrangeFox Recovery
       run: |
-        cd android-recovery
+        cd fox_build
         source build/envsetup.sh
         
-        # Konfigurasi pembatasan memori runtime Java framework agar stabil
         export ALLOW_MISSING_DEPENDENCIES=true
         export _JAVA_OPTIONS="-Xmx4g"
         export LC_ALL="C"
         
-        # Flag Spesifik OrangeFox untuk menyuntikkan Identitas & Konfigurasi Build
+        # Flag parameter identitas kompilasi OrangeFox
         export FOX_BUILD_DEVICE=${{ github.event.inputs.DEVICE_NAME }}
         export OF_MAINTAINER="${{ github.event.inputs.MAINTAINER_NAME }}"
         
-        # Panggil konfigurasi hardware lewat target makan siang compiler
         lunch ${{ env.DEVICE_MAKEFILE }}-eng
         make clean
-        
-        # Membakar recovery dengan pembatasan 2 core thread demi kestabilan RAM (Anti-OOM)
         make recoveryimage -j2
         echo "Proses pembuatan biner gambar utama selesai."
       
@@ -174,16 +174,13 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/OrangeFox*.zip
-          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
+          fox_build/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/OrangeFox*.zip
+          fox_build/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
         name: Unofficial OrangeFox untuk ${{ github.event.inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
         tag_name: Fox-${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
         body: |
-          ### Kompilasi Sukses Berjalan!
+          ### Kompilasi Pembuatan Sukses Berjalan!
           - **Perangkat**: Samsung Galaxy A05s (`${{ github.event.inputs.DEVICE_NAME }}`)
           - **Maintainer**: `${{ github.event.inputs.MAINTAINER_NAME }}`
-          - **Basis Kode**: OrangeFox AOSP 12.1 (`fox_12.1`)
           - **Device Tree**: [Sumber Terkait](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
-          - **ID Komit**: `${{ env.COMMIT_ID }}`
-          
-          _File berformat `.zip` siap pakai serta file biner mentah `.img` telah disertakan di bawah._
+          - **ID Komit Tree**: `${{ env.COMMIT_ID }}`
