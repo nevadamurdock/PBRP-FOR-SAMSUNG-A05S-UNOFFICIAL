@@ -1,0 +1,179 @@
+name: Recovery Builder - PBRP
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_BRANCH:
+        description: 'PBRP Manifest Branch'
+        required: true
+        default: 'android-12.1'
+        type: choice
+        options:
+        - 'android-12.1'
+      DEVICE_TREE:
+        description: 'Custom Recovery Tree'
+        required: true
+        default: 'https://github.com/kinguser981/android_device_samsung_a05s.git'
+      DEVICE_TREE_BRANCH:
+        description: 'Custom Recovery Tree Branch'
+        required: true
+        default: 'android-12.1'
+      DEVICE_PATH:
+        description: 'Specify your Device Path'
+        required: true
+        default: 'device/samsung/a05s'
+      DEVICE_NAME:
+        description: 'Specify your Device Codename'
+        required: true
+        default: 'a05s'
+      BUILD_TARGET:
+        description: 'Specify your Build Target'
+        required: true
+        default: 'recovery'
+        type: choice
+        options:
+        - recovery
+
+jobs:
+  build:
+    name: Build PBRP oleh ${{ github.actor }}
+    runs-on: ubuntu-20.04
+    if: github.event.repository.owner.id == github.event.sender.id
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: write
+    steps:
+    - name: Check Out
+      uses: actions/checkout@v4
+      
+    - name: Tampilkan Variabel Input
+      run: |
+        echo "Displaying variables/inputs."
+        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "Device Tree: ${{ github.event.inputs.DEVICE_TREE }}"
+        echo "Device Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
+        echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
+        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
+        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}image"
+
+    - name: Pembersihan Disk Agresif (Anti Disk Full)
+      run: |
+        echo "=== UKURAN DISK SEBELUM PEMBERSIHAN ==="
+        df -h
+        
+        # Hapus runtime bawaan GitHub runner yang memakan puluhan GB
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/share/phantomjs*
+        sudo rm -rf /usr/share/swift
+        
+        # Bersihkan Docker dan APT cache
+        sudo apt-get clean
+        docker rmi $(docker images -q) 2>/dev/null || true
+        
+        echo "=== UKURAN DISK SESUDAH PEMBERSIHAN ==="
+        df -h
+      
+    - name: Konfigurasi Swap Space Raksasa (Anti OOM)
+      run: |
+        sudo swapoff -a
+        sudo rm -f /mnt/swapfile
+        # Membuat swap 16GB di /mnt (partisi paling lega di runner gratisan)
+        sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
+        sudo chmod 600 /mnt/swapfile
+        sudo mkswap /mnt/swapfile
+        sudo swapon /mnt/swapfile
+        echo "=== STATUS MEMORI DAN SWAP ==="
+        free -h
+        
+    - name: Menyiapkan Environment & Dependensi Compiler
+      run: |
+        sudo apt update
+        sudo apt -y upgrade
+        sudo apt -y install gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libtinfo5 libgflags-dev python3 python3-pip
+        sudo add-apt-repository universe
+        sudo apt -y install libncurses5
+
+    - name: Install OpenJDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '8'
+
+    - name: Install Git-Repo
+      run: |
+        mkdir ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+
+    - name: Inisialisasi Kode Sumber PBRP
+      run: |
+        mkdir android-recovery
+        cd android-recovery
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        # Sinkronisasi manifest utama PitchBlack Recovery Project
+        repo init --depth=1 -u https://github.com/PitchBlackRecoveryProject/manifest_pb -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+  
+    - name: Sinkronisasi Repo (Hemat Bandwidth & Disk)
+      run: |
+        cd android-recovery
+        repo sync -c -j4 --force-sync --no-tags --no-clone-bundle
+      
+    - name: Clone Device Tree (kinguser981)
+      run: |
+        cd android-recovery
+        git clone ${{ github.event.inputs.DEVICE_TREE }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
+        cd ${{ github.event.inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+    - name: Cek Struktur Makefile
+      run: |
+        cd android-recovery
+        if [ -f ${{ github.event.inputs.DEVICE_PATH }}/twrp_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
+            echo "DEVICE_MAKEFILE=twrp_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+        elif [ -f ${{ github.event.inputs.DEVICE_PATH }}/omni_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
+            echo "DEVICE_MAKEFILE=omni_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
+        else
+            echo "No recovery makefile found!"
+            exit 1
+        fi
+
+    - name: Proses Kompilasi Gambar PBRP
+      run: |
+        cd android-recovery
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        export _JAVA_OPTIONS="-Xmx4g"
+        
+        # Lunch target menggunakan makefile terdeteksi
+        lunch ${{ env.DEVICE_MAKEFILE }}-eng
+        
+        make clean
+        
+        # Batasi ke 2 thread (-j2) agar RAM tidak bocor/melonjak tinggi yang memicu OOM
+        make pbrp -j2
+        echo "Selesai membuat berkas kompilasi PBRP."
+      
+    - name: Atur Tanggal Kompilasi
+      run: |
+        echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+      
+    - name: Unggah Hasil ke GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/PBRP*.zip
+          android-recovery/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img
+        name: Unofficial PBRP untuk Samsung A05s // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          Kompilasi Berhasil!
+          Build Basis: PBRP ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: [Device Tree](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
+          Commit Terakhir: ${{ env.COMMIT_ID }}
