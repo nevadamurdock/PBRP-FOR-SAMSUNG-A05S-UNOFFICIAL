@@ -98,22 +98,22 @@ jobs:
         mkdir -p fox_build
         cd fox_build
         
-        # Mengunduh arsip yang telah Anda siapkan
+        # Mengunduh arsip sinkronisasi dari server uploader
         wget https://uploader.sh/Li_zF/7zI1U.gz
         
-        # Ekstrak file .gz bawaan dari GitLab sync
+        # Ekstrak file .gz menjadi file tarball mentah
         gunzip 7zI1U.gz
         
-        # Antisipasi apabila isi file mentahnya adalah sebuah tarball
-        if file 7zI1U | grep -q 'tar archive'; then
-          tar -xvf 7zI1U
-        else
-          # Jika berupa skrip teks langsung, ubah namanya agar seragam
-          mv 7zI1U orangefox_sync.sh 2>/dev/null || true
-        fi
+        # Ekstrak arsip tarball secara langsung
+        tar -xvf 7zI1U
         
-        # Berikan izin eksekusi penuh pada skrip
-        chmod +x *.sh 2>/dev/null || chmod +x orangefox_sync.sh 2>/dev/null
+        # Pindahkan seluruh isi folder hasil ekstraksi ke direktori kerja utama (fox_build)
+        mv sync-master/* .
+        rm -rf sync-master 7zI1U
+        
+        # Pastikan izin eksekusi diberikan pada skrip utama
+        chmod +x orangefox_sync.sh update_fox.sh
+        ls -la
 
     - name: Jalankan Sinkronisasi Kode Sumber OrangeFox
       run: |
@@ -121,12 +121,8 @@ jobs:
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
         
-        # Mengeksekusi skrip bawaan dari repositori OrangeFox Sync
-        if [ -f "orangefox_sync.sh" ]; then
-          ./orangefox_sync.sh
-        else
-          sh *.sh
-        fi
+        # Menjalankan skrip sinkronisasi asli bawaan proyek OrangeFox
+        ./orangefox_sync.sh
 
     - name: Mengkloning Device Tree Samsung A05s
       run: |
