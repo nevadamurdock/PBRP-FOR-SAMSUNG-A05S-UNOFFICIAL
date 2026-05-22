@@ -110,14 +110,15 @@ jobs:
         chmod a+x ~/bin/repo
         sudo ln -sf ~/bin/repo /usr/bin/repo
 
-    - name: Inisialisasi Kode Sumber OrangeFox (Branch Universal)
+    - name: Inisialisasi Kode Sumber OrangeFox (Menggunakan Mirror GitHub Bebas Autentikasi)
       run: |
         mkdir android-recovery
         cd android-recovery
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
-        # Menarik basis manifes resmi kompilasi OrangeFox
-        repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b mailline
+        
+        # Dialihkan ke basis cermin manifest minimal OrangeFox di GitHub untuk menghindari proteksi GitLab Auth
+        repo init --depth=1 -u https://github.com/kinguser981/OrangeFox-Manifest.git -b orangefox-${{ github.event.inputs.MANIFEST_BRANCH }}
   
     - name: Proses Sinkronisasi Sumber Ringan (Hemat Bandwidth)
       run: |
@@ -134,9 +135,9 @@ jobs:
     - name: Verifikasi Struktur Nama Makefile Target
       run: |
         cd android-recovery
-        if [ -f ${{ github.event.inputs.DEVICE_PATH }}/twrp_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
+        if [ -f ${{ github.event.inputs.DEVICE_PATH }}/twrp_${{ github.event.inputs.DEVICE_NAME }}.mk ]; then
             echo "DEVICE_MAKEFILE=twrp_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
-        elif [ -f ${{ github.event.inputs.DEVICE_PATH }}/omni_${{ github.event.inputs.DEVICE_NAME}}.mk ]; then
+        elif [ -f ${{ github.event.inputs.DEVICE_PATH }}/omni_${{ github.event.inputs.DEVICE_NAME }}.mk ]; then
             echo "DEVICE_MAKEFILE=omni_${{ github.event.inputs.DEVICE_NAME }}" >> $GITHUB_ENV
         else
             echo "Format Makefile perangkat tidak ditemukan di device tree!"
@@ -181,7 +182,7 @@ jobs:
           ### Kompilasi Sukses Berjalan!
           - **Perangkat**: Samsung Galaxy A05s (`${{ github.event.inputs.DEVICE_NAME }}`)
           - **Maintainer**: `${{ github.event.inputs.MAINTAINER_NAME }}`
-          - **Basis Kode**: OrangeFox AOSP 12.1 (`mailline`)
+          - **Basis Kode**: OrangeFox AOSP 12.1 (`fox_12.1`)
           - **Device Tree**: [Sumber Terkait](${{ github.event.inputs.DEVICE_TREE }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
           - **ID Komit**: `${{ env.COMMIT_ID }}`
           
